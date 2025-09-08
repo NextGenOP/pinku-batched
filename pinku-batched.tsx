@@ -6,8 +6,8 @@ import {
     type ChangeEvent,
     type ReactNode
 } from "react";
-// --- NEW --- Added ClipboardCopy and Check icons
-import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera, ClipboardCopy, Check } from "lucide-react";
+// --- NEW --- Added ZoomIn and X icons for the preview modal
+import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera, ClipboardCopy, Check, ZoomIn, X } from "lucide-react";
 
 // --- Original Pink Filter Logic (Unchanged) ---
 const COLOR_A: number[] = [22, 80, 39];
@@ -45,10 +45,11 @@ export default function Page(): ReactNode {
     const [processedImages, setProcessedImages] = useState<{ url: string, name: string, originalName: string }[]>([]);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
     const [processingProgress, setProcessingProgress] = useState<number>(0);
-    const [copiedImageIndex, setCopiedImageIndex] = useState<number | null>(null); // --- NEW --- State for copy feedback
+    const [copiedImageIndex, setCopiedImageIndex] = useState<number | null>(null);
+    // --- NEW --- State to hold the URL of the image for the preview modal
+    const [previewImage, setPreviewImage] = useState<string | null>(null);
     const fileRef = useRef<HTMLInputElement>(null);
 
-    // --- NEW --- Function to handle pasting from clipboard
     const handlePaste = async (event: ClipboardEvent) => {
         if (!event.clipboardData) return;
         const items = event.clipboardData.items;
@@ -58,7 +59,6 @@ export default function Page(): ReactNode {
             if (item.type.startsWith("image/")) {
                 const blob = item.getAsFile();
                 if (blob) {
-                    // Create a new File object with a unique name
                     const file = new File([blob], `pasted-image-${Date.now()}.${blob.type.split('/')[1]}`, { type: blob.type });
                     imageFiles.push(file);
                 }
@@ -71,7 +71,6 @@ export default function Page(): ReactNode {
         }
     };
 
-    // --- NEW --- Add paste event listener on component mount
     useEffect(() => {
         window.addEventListener("paste", handlePaste);
         return () => {
@@ -176,7 +175,6 @@ export default function Page(): ReactNode {
         document.body.removeChild(a);
     };
 
-    // --- NEW --- Function to copy a single image to clipboard
     const handleCopySingle = async (url: string, index: number) => {
         try {
             const response = await fetch(url);
@@ -184,8 +182,8 @@ export default function Page(): ReactNode {
             await navigator.clipboard.write([
                 new ClipboardItem({ [blob.type]: blob })
             ]);
-            setCopiedImageIndex(index); // Trigger visual feedback
-            setTimeout(() => setCopiedImageIndex(null), 2000); // Reset after 2 seconds
+            setCopiedImageIndex(index);
+            setTimeout(() => setCopiedImageIndex(null), 2000);
         } catch (error) {
             console.error("Failed to copy image to clipboard:", error);
             alert("Sorry, couldn't copy the image. Your browser might not support this feature.");
@@ -201,6 +199,26 @@ export default function Page(): ReactNode {
     return (
         <div className="bg-[#010c05] min-h-screen px-4 py-8 flex justify-center text-[#ececec]">
             <div className="w-full max-w-6xl">
+
+                {/* --- NEW --- Image Preview Modal --- */}
+                {previewImage && (
+                    <div 
+                        className="fixed inset-0 bg-black/80 backdrop-blur-lg z-50 flex items-center justify-center p-4 animate-fade-in"
+                        onClick={() => setPreviewImage(null)} // Click outside to close
+                    >
+                        <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+                            <img src={previewImage} alt="Enlarged Preview" className="w-full h-full object-contain rounded-lg shadow-2xl" />
+                            <button
+                                onClick={() => setPreviewImage(null)}
+                                className="absolute -top-4 -right-4 bg-white/20 hover:bg-white/30 text-white rounded-full w-10 h-10 flex items-center justify-center transition-transform transform hover:scale-110"
+                                aria-label="Close preview"
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                    </div>
+                )}
+                
                 {/* Header */}
                 <div className="text-center mb-8">
                     <div className="flex items-center justify-center mb-4">
@@ -237,7 +255,6 @@ export default function Page(): ReactNode {
                                         <Upload size={24} className="text-[#010c05]" />
                                     </div>
                                     <h3 className="text-xl font-semibold mb-2">Upload Multiple Images</h3>
-                                    {/* --- NEW --- Updated text to include paste instructions */}
                                     <p className="text-[#a4d7ba] mb-4">Drag & drop, click to browse, or paste an image</p>
                                     <div className="inline-flex items-center gap-2 bg-[#a4d7ba]/20 hover:bg-[#a4d7ba]/30 px-4 py-2 rounded-lg transition-colors">
                                         <Camera size={16} />
@@ -247,7 +264,7 @@ export default function Page(): ReactNode {
                                 </div>
                             ) : (
                                 <div className="w-full">
-                                      <div className="text-center mb-4">
+                                    <div className="text-center mb-4">
                                         <h3 className="text-xl font-medium">
                                             {files.length} Image{files.length !== 1 ? 's' : ''} Ready to Process
                                         </h3>
@@ -261,7 +278,18 @@ export default function Page(): ReactNode {
                                                     alt={file.name}
                                                     className="w-full h-full object-cover"
                                                 />
-                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                {/* --- NEW --- Added Preview button to the hover overlay */}
+                                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setPreviewImage(file.url);
+                                                        }}
+                                                        className="bg-blue-500/80 hover:bg-blue-500 text-white rounded-full w-8 h-8 flex items-center justify-center transition-transform transform hover:scale-110"
+                                                        aria-label={`Preview ${file.name}`}
+                                                    >
+                                                        <ZoomIn size={20} />
+                                                    </button>
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
@@ -317,18 +345,18 @@ export default function Page(): ReactNode {
                         {(isProcessing || processedImages.length > 0) && (
                             <div className="border-2 border-[#a4d7ba]/40 rounded-xl p-6 bg-[#1e5034]/50">
                                 {isProcessing && !processedImages.length && (
-                                       <div className="mb-4">
-                                        <div className="flex justify-between text-sm text-[#a4d7ba] mb-1">
-                                            <span>Processing Images</span>
-                                            <span>{processingProgress}%</span>
-                                        </div>
-                                        <div className="w-full bg-[#010c05]/50 rounded-full h-2.5">
-                                            <div
-                                                className="bg-[#27e47a] h-2.5 rounded-full transition-all duration-300"
-                                                style={{ width: `${processingProgress}%` }}
-                                            ></div>
-                                        </div>
-                                    </div>
+                                        <div className="mb-4">
+                                         <div className="flex justify-between text-sm text-[#a4d7ba] mb-1">
+                                             <span>Processing Images</span>
+                                             <span>{processingProgress}%</span>
+                                         </div>
+                                         <div className="w-full bg-[#010c05]/50 rounded-full h-2.5">
+                                             <div
+                                                 className="bg-[#27e47a] h-2.5 rounded-full transition-all duration-300"
+                                                 style={{ width: `${processingProgress}%` }}
+                                             ></div>
+                                         </div>
+                                     </div>
                                 )}
                                 {processedImages.length > 0 && (
                                     <div>
@@ -357,10 +385,17 @@ export default function Page(): ReactNode {
                                                             alt={`Processed ${image.originalName}`}
                                                         />
                                                     </div>
-                                                    {/* --- NEW --- Buttons overlay for Copy and Download */}
+                                                    {/* --- NEW --- Updated overlay with a Preview button --- */}
                                                     <div className="absolute inset-0 bg-black/80 p-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between">
                                                         <p className="text-[#ececec] text-xs truncate">{image.originalName}</p>
                                                         <div className="space-y-1.5">
+                                                            <button
+                                                                className="w-full flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
+                                                                onClick={() => setPreviewImage(image.url)}
+                                                            >
+                                                                <ZoomIn size={14} />
+                                                                <span>Preview</span>
+                                                            </button>
                                                             <button
                                                                 className="w-full flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
                                                                 onClick={() => handleDownloadSingle(image.url, image.name)}
@@ -368,7 +403,7 @@ export default function Page(): ReactNode {
                                                                 <Download size={14} />
                                                                 <span>Download</span>
                                                             </button>
-                                                             <button
+                                                            <button
                                                                 className={`w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-md transition-colors ${copiedImageIndex === index ? 'bg-green-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
                                                                 onClick={() => handleCopySingle(image.url, index)}
                                                             >
