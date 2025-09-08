@@ -9,29 +9,53 @@ import {
 // --- NEW --- Added ArrowRightLeft icon for the reverse color feature
 import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera, ClipboardCopy, Check, ZoomIn, ArrowRightLeft } from "lucide-react";
 
+// --- REFACTORED --- Moved color definitions and LUT generation into functions
+const GREEN_SHADOW: number[] = [22, 80, 39];
+const PINK_HIGHLIGHT: number[] = [249, 159, 210];
 
-// --- MODIFIED --- Moved the filtering logic into its own function.
-// The LUT generation will now happen dynamically inside handleConvert.
-function filtering(
-    imageData: ImageData,
-    rLUT: Uint8ClampedArray,
-    gLUT: Uint8ClampedArray,
-    bLUT: Uint8ClampedArray
-): ImageData {
+/**
+ * Generates Look-Up Tables (LUTs) for color mapping based on shadow and highlight colors.
+ * @param shadowColor - The RGB array for the shadow color.
+ * @param highlightColor - The RGB array for the highlight color.
+ * @returns An object containing the r, g, and b LUTs.
+ */
+function generateLUTs(shadowColor: number[], highlightColor: number[]) {
+    const rLUT = new Uint8ClampedArray(256);
+    const gLUT = new Uint8ClampedArray(256);
+    const bLUT = new Uint8ClampedArray(256);
+
+    for (let i = 0; i < 256; i++) {
+        const luminance = i / 255.0;
+        const invLuminance = 1.0 - luminance;
+        rLUT[i] = (shadowColor[0] * invLuminance) + (highlightColor[0] * luminance);
+        gLUT[i] = (shadowColor[1] * invLuminance) + (highlightColor[1] * luminance);
+        bLUT[i] = (shadowColor[2] * invLuminance) + (highlightColor[2] * luminance);
+    }
+    return { rLUT, gLUT, bLUT };
+}
+
+/**
+ * Applies the duotone filter to an image's data using the provided LUTs.
+ * @param imageData - The ImageData object from a canvas.
+ * @param luts - The Look-Up Tables for r, g, and b channels.
+ * @returns The modified ImageData.
+ */
+function filtering(imageData: ImageData, luts: { rLUT: Uint8ClampedArray, gLUT: Uint8ClampedArray, bLUT: Uint8ClampedArray }): ImageData {
     const data = imageData.data;
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
         const luminanceInt = Math.round((r * 0.2126) + (g * 0.7152) + (b * 0.0722));
-        data[i] = rLUT[luminanceInt];
-        data[i + 1] = gLUT[luminanceInt];
-        data[i + 2] = bLUT[luminanceInt];
+        data[i] = luts.rLUT[luminanceInt];
+        data[i + 1] = luts.gLUT[luminanceInt];
+        data[i + 2] = luts.bLUT[luminanceInt];
     }
     return imageData;
 }
 
-// Image Preview Modal Component (Unchanged)
+
+// --- Image Preview Modal Component (Unchanged) ---
 const ImagePreviewModal = ({ imageUrl, onClose }: { imageUrl: string | null; onClose: () => void; }) => {
     if (!imageUrl) return null;
 
@@ -51,7 +75,7 @@ const ImagePreviewModal = ({ imageUrl, onClose }: { imageUrl: string | null; onC
                 src={imageUrl}
                 alt="Image Preview"
                 className="max-w-full max-h-full object-contain"
-                onClick={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()} // Prevent closing modal when clicking the image
             />
         </div>
     );
@@ -65,10 +89,11 @@ export default function Page(): ReactNode {
     const [processingProgress, setProcessingProgress] = useState<number>(0);
     const [copiedImageIndex, setCopiedImageIndex] = useState<number | null>(null);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
-    // --- NEW --- State to control color reversal
+    // --- NEW --- State to control the color direction
     const [isReversed, setIsReversed] = useState<boolean>(false);
     const fileRef = useRef<HTMLInputElement>(null);
 
+    // --- handlePaste and other hooks remain unchanged ---
     const handlePaste = async (event: ClipboardEvent) => {
         if (!event.clipboardData) return;
         const items = event.clipboardData.items;
@@ -133,24 +158,10 @@ export default function Page(): ReactNode {
         setProcessedImages([]);
         let processedCount = 0;
 
-        // --- MODIFIED --- LUT generation is now inside handleConvert
-        const COLOR_A: number[] = [22, 80, 39];    // Green color for shadows
-        const COLOR_B: number[] = [249, 159, 210]; // Pink color for highlights
-
-        const shadowColor = isReversed ? COLOR_B : COLOR_A;
-        const highlightColor = isReversed ? COLOR_A : COLOR_B;
-
-        const rLUT = new Uint8ClampedArray(256);
-        const gLUT = new Uint8ClampedArray(256);
-        const bLUT = new Uint8ClampedArray(256);
-
-        for (let i = 0; i < 256; i++) {
-            const luminance = i / 255.0;
-            const invLuminance = 1.0 - luminance;
-            rLUT[i] = (shadowColor[0] * invLuminance) + (highlightColor[0] * luminance);
-            gLUT[i] = (shadowColor[1] * invLuminance) + (highlightColor[1] * luminance);
-            bLUT[i] = (shadowColor[2] * invLuminance) + (highlightColor[2] * luminance);
-        }
+        // --- NEW --- Generate LUTs dynamically based on the isReversed state
+        const shadowColor = isReversed ? PINK_HIGHLIGHT : GREEN_SHADOW;
+        const highlightColor = isReversed ? GREEN_SHADOW : PINK_HIGHLIGHT;
+        const luts = generateLUTs(shadowColor, highlightColor);
 
         const processingPromises = files.map(async (file) => {
             const image = document.createElement('img');
@@ -168,8 +179,8 @@ export default function Page(): ReactNode {
                 if (ctx) {
                     ctx.drawImage(image, 0, 0);
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    // --- MODIFIED --- Pass dynamically generated LUTs to the filtering function
-                    const filterResult = filtering(imageData, rLUT, gLUT, bLUT);
+                    // --- MODIFIED --- Pass the dynamically generated LUTs to the filtering function
+                    const filterResult = filtering(imageData, luts);
                     ctx.putImageData(filterResult, 0, 0);
                     processedCount++;
                     setProcessingProgress(Math.round((processedCount / files.length) * 100));
@@ -192,6 +203,7 @@ export default function Page(): ReactNode {
         }
     };
 
+    // --- Download and copy handlers remain unchanged ---
     const handleDownloadAll = () => {
         processedImages.forEach((image, index) => {
             setTimeout(() => {
@@ -233,12 +245,13 @@ export default function Page(): ReactNode {
         setFiles([]);
         setProcessedImages([]);
         setProcessingProgress(0);
+        setIsReversed(false); // Also reset the color direction
     };
 
     return (
         <div className="bg-[#010c05] min-h-screen px-4 py-8 flex justify-center text-[#ececec]">
             <div className="w-full max-w-6xl">
-                {/* Header */}
+                {/* Header (Unchanged) */}
                 <div className="text-center mb-8">
                     <div className="flex items-center justify-center mb-4">
                         <div className="bg-[#27e47a] p-3 rounded-full">
@@ -247,7 +260,7 @@ export default function Page(): ReactNode {
                     </div>
                     <h1 className="text-4xl font-bold mb-2">Pinku Batch Filter</h1>
                     <p className="text-[#a4d7ba] max-w-md mx-auto">
-                        Transform multiple images with our magical pink duotone filter.
+                        Transform multiple images with our magical duotone filter.
                         Upload, process, and download all at once.
                     </p>
                 </div>
@@ -255,7 +268,7 @@ export default function Page(): ReactNode {
                 {/* Main Card */}
                 <div className="bg-[#1e5034]/50 backdrop-blur-lg rounded-2xl border border-[#a4d7ba]/40 shadow-2xl overflow-hidden">
                     <div className="p-6 md:p-8">
-                        {/* Upload Area */}
+                        {/* Upload Area (Unchanged) */}
                         <div
                             className="w-full border-2 border-dashed border-[#a4d7ba]/50 hover:border-[#27e47a] p-8 rounded-xl min-h-[15rem] transition-all duration-300 bg-[#a4d7ba]/10 hover:bg-[#a4d7ba]/20 mb-6 cursor-pointer"
                             onClick={openFile}
@@ -329,21 +342,19 @@ export default function Page(): ReactNode {
                             )}
                         </div>
 
-                        {/* --- NEW --- Color Reverse Toggle */}
-                        <div className="flex items-center justify-center mb-6">
-                            <button
-                                onClick={() => setIsReversed(!isReversed)}
-                                className="flex items-center gap-3 text-[#a4d7ba] hover:text-white transition-colors px-4 py-2 rounded-lg bg-[#a4d7ba]/10 hover:bg-[#a4d7ba]/20"
-                                aria-pressed={isReversed}
-                                disabled={isProcessing}
-                            >
-                                <ArrowRightLeft size={16} />
-                                <span className="font-medium">
-                                    {isReversed ? 'Shadows: Pink / Highlights: Green' : 'Shadows: Green / Highlights: Pink'}
-                                </span>
-                            </button>
-                        </div>
-
+                        {/* --- NEW --- Filter Options */}
+                        {files.length > 0 && !isProcessing && (
+                            <div className="flex justify-end mb-4">
+                                <button
+                                    onClick={() => setIsReversed(prev => !prev)}
+                                    title="Reverse shadow and highlight colors"
+                                    className="flex items-center gap-2 text-sm px-4 py-2 rounded-lg bg-[#1e5034] hover:bg-[#2a6f47] transition-colors"
+                                >
+                                    <ArrowRightLeft size={16} />
+                                    <span>{isReversed ? "Shadow: Pink, Highlight: Green" : "Shadow: Green, Highlight: Pink"}</span>
+                                </button>
+                            </div>
+                        )}
 
                         {/* Action Buttons */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -369,13 +380,13 @@ export default function Page(): ReactNode {
                                 ) : (
                                     <>
                                         <Wand2 size={20} />
-                                        Apply Pinku Filter to All ({files.length})
+                                        Apply Filter to All ({files.length})
                                     </>
                                 )}
                             </button>
                         </div>
-
-                        {/* Progress Bar & Results Section */}
+                        
+                        {/* --- Results Section (Unchanged) --- */}
                         {(isProcessing || processedImages.length > 0) && (
                             <div className="border-2 border-[#a4d7ba]/40 rounded-xl p-6 bg-[#1e5034]/50">
                                 {isProcessing && !processedImages.length && (
@@ -431,14 +442,14 @@ export default function Page(): ReactNode {
                                                             </button>
                                                         </div>
                                                         <div className="space-y-1.5">
-                                                            <button
+                                                                <button
                                                                 className="w-full flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
                                                                 onClick={() => handleDownloadSingle(image.url, image.name)}
                                                             >
                                                                 <Download size={14} />
                                                                 <span>Download</span>
                                                             </button>
-                                                              <button
+                                                                <button
                                                                 className={`w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-md transition-colors ${copiedImageIndex === index ? 'bg-green-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
                                                                 onClick={() => handleCopySingle(image.url, index)}
                                                             >
@@ -457,7 +468,7 @@ export default function Page(): ReactNode {
                     </div>
                 </div>
 
-                {/* Features Section */}
+                {/* Features Section (Unchanged) */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-8">
                     <div className="bg-[#1e5034]/50 backdrop-blur-sm rounded-xl p-6 border border-[#a4d7ba]/30">
                         <div className="bg-[#27e47a]/20 p-3 rounded-lg w-12 h-12 flex items-center justify-center mb-4">
@@ -485,7 +496,6 @@ export default function Page(): ReactNode {
                 </div>
             </div>
 
-            {/* Render the preview modal component */}
             <ImagePreviewModal imageUrl={selectedImage} onClose={() => setSelectedImage(null)} />
         </div>
     );
