@@ -6,7 +6,8 @@ import {
     type ChangeEvent,
     type ReactNode
 } from "react";
-import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera } from "lucide-react";
+// --- NEW --- Added ClipboardCopy and Check icons
+import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera, ClipboardCopy, Check } from "lucide-react";
 
 // --- Original Pink Filter Logic (Unchanged) ---
 const COLOR_A: number[] = [22, 80, 39];
@@ -24,7 +25,6 @@ for (let i = 0; i < 256; i++) {
     bLUT[i] = (COLOR_A[2] * invLuminance) + (COLOR_B[2] * luminance);
 }
 
-// Optimized filtering function using the pre-computed LUTs
 function filtering(imageData: ImageData): ImageData {
     const data = imageData.data;
     for (let i = 0; i < data.length; i += 4) {
@@ -32,12 +32,9 @@ function filtering(imageData: ImageData): ImageData {
         const g = data[i + 1];
         const b = data[i + 2];
         const luminanceInt = Math.round((r * 0.2126) + (g * 0.7152) + (b * 0.0722));
-        
-        // Modify the data in place to save memory
         data[i] = rLUT[luminanceInt];
         data[i + 1] = gLUT[luminanceInt];
         data[i + 2] = bLUT[luminanceInt];
-        // Alpha channel (data[i + 3]) remains 255
     }
     return imageData;
 }
@@ -48,17 +45,46 @@ export default function Page(): ReactNode {
     const [processedImages, setProcessedImages] = useState<{ url: string, name: string, originalName: string }[]>([]);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
     const [processingProgress, setProcessingProgress] = useState<number>(0);
+    const [copiedImageIndex, setCopiedImageIndex] = useState<number | null>(null); // --- NEW --- State for copy feedback
     const fileRef = useRef<HTMLInputElement>(null);
 
-    // --- Optimization 3: Better Memory Management for Previews ---
+    // --- NEW --- Function to handle pasting from clipboard
+    const handlePaste = async (event: ClipboardEvent) => {
+        if (!event.clipboardData) return;
+        const items = event.clipboardData.items;
+        const imageFiles: File[] = [];
+
+        for (const item of items) {
+            if (item.type.startsWith("image/")) {
+                const blob = item.getAsFile();
+                if (blob) {
+                    // Create a new File object with a unique name
+                    const file = new File([blob], `pasted-image-${Date.now()}.${blob.type.split('/')[1]}`, { type: blob.type });
+                    imageFiles.push(file);
+                }
+            }
+        }
+
+        if (imageFiles.length > 0) {
+            setFiles(prev => [...prev, ...imageFiles]);
+            setProcessedImages([]);
+        }
+    };
+
+    // --- NEW --- Add paste event listener on component mount
+    useEffect(() => {
+        window.addEventListener("paste", handlePaste);
+        return () => {
+            window.removeEventListener("paste", handlePaste);
+        };
+    }, []);
+
     const filePreviews = useMemo(() => files.map(file => ({
         name: file.name,
         url: URL.createObjectURL(file)
     })), [files]);
 
     useEffect(() => {
-        // This is a cleanup function that runs when the component unmounts
-        // or when `filePreviews` changes.
         return () => {
             filePreviews.forEach(file => URL.revokeObjectURL(file.url));
         };
@@ -74,7 +100,7 @@ export default function Page(): ReactNode {
         if (e.target.files) {
             const newFiles = Array.from(e.target.files);
             setFiles(prev => [...prev, ...newFiles]);
-            setProcessedImages([]); // Clear previous results
+            setProcessedImages([]);
         }
     }
     
@@ -82,51 +108,36 @@ export default function Page(): ReactNode {
         setFiles(prev => prev.filter((_, index) => index !== indexToRemove));
     };
 
-    // --- Optimization 2: Process Images in Parallel ---
     const handleConvert = async () => {
         if (files.length === 0) return;
-
         setIsProcessing(true);
         setProcessingProgress(0);
         setProcessedImages([]);
-        
         let processedCount = 0;
 
         const processingPromises = files.map(async (file) => {
             const image = document.createElement('img');
             const objectUrl = URL.createObjectURL(file);
-            
             try {
                 await new Promise<void>((resolve, reject) => {
                     image.onload = () => resolve();
-                    image.onerror = reject; // Handle potential loading errors
+                    image.onerror = reject;
                     image.src = objectUrl;
                 });
-
-                // Use a temporary canvas for each image to allow parallel processing
                 const canvas = document.createElement('canvas');
                 canvas.width = image.width;
                 canvas.height = image.height;
                 const ctx = canvas.getContext("2d");
-
                 if (ctx) {
                     ctx.drawImage(image, 0, 0);
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                     const filterResult = filtering(imageData);
                     ctx.putImageData(filterResult, 0, 0);
-
-                    // Atomically update progress
                     processedCount++;
                     setProcessingProgress(Math.round((processedCount / files.length) * 100));
-
-                    return {
-                        url: canvas.toDataURL('image/png'),
-                        name: `pinku_${file.name}`,
-                        originalName: file.name
-                    };
+                    return { url: canvas.toDataURL('image/png'), name: `pinku_${file.name}`, originalName: file.name };
                 }
             } finally {
-                // Immediate cleanup of the object URL
                 URL.revokeObjectURL(objectUrl);
             }
             return null;
@@ -138,7 +149,6 @@ export default function Page(): ReactNode {
             setProcessedImages(validResults);
         } catch (error) {
             console.error("An error occurred during image processing:", error);
-            // Optionally, set an error state to show the user
         } finally {
             setIsProcessing(false);
         }
@@ -164,6 +174,22 @@ export default function Page(): ReactNode {
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
+    };
+
+    // --- NEW --- Function to copy a single image to clipboard
+    const handleCopySingle = async (url: string, index: number) => {
+        try {
+            const response = await fetch(url);
+            const blob = await response.blob();
+            await navigator.clipboard.write([
+                new ClipboardItem({ [blob.type]: blob })
+            ]);
+            setCopiedImageIndex(index); // Trigger visual feedback
+            setTimeout(() => setCopiedImageIndex(null), 2000); // Reset after 2 seconds
+        } catch (error) {
+            console.error("Failed to copy image to clipboard:", error);
+            alert("Sorry, couldn't copy the image. Your browser might not support this feature.");
+        }
     };
 
     const handleReset = () => {
@@ -211,7 +237,8 @@ export default function Page(): ReactNode {
                                         <Upload size={24} className="text-[#010c05]" />
                                     </div>
                                     <h3 className="text-xl font-semibold mb-2">Upload Multiple Images</h3>
-                                    <p className="text-[#a4d7ba] mb-4">Drag & drop or click to browse</p>
+                                    {/* --- NEW --- Updated text to include paste instructions */}
+                                    <p className="text-[#a4d7ba] mb-4">Drag & drop, click to browse, or paste an image</p>
                                     <div className="inline-flex items-center gap-2 bg-[#a4d7ba]/20 hover:bg-[#a4d7ba]/30 px-4 py-2 rounded-lg transition-colors">
                                         <Camera size={16} />
                                         <span>Choose Files</span>
@@ -330,15 +357,25 @@ export default function Page(): ReactNode {
                                                             alt={`Processed ${image.originalName}`}
                                                         />
                                                     </div>
-                                                    <div className="absolute inset-0 bg-black/70 p-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
-                                                        <p className="text-[#ececec] text-xs truncate mb-2">{image.originalName}</p>
-                                                        <button
-                                                            className="w-full flex items-center justify-center gap-1 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
-                                                            onClick={() => handleDownloadSingle(image.url, image.name)}
-                                                        >
-                                                            <Download size={14} />
-                                                            Download
-                                                        </button>
+                                                    {/* --- NEW --- Buttons overlay for Copy and Download */}
+                                                    <div className="absolute inset-0 bg-black/80 p-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between">
+                                                        <p className="text-[#ececec] text-xs truncate">{image.originalName}</p>
+                                                        <div className="space-y-1.5">
+                                                            <button
+                                                                className="w-full flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
+                                                                onClick={() => handleDownloadSingle(image.url, image.name)}
+                                                            >
+                                                                <Download size={14} />
+                                                                <span>Download</span>
+                                                            </button>
+                                                             <button
+                                                                className={`w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-md transition-colors ${copiedImageIndex === index ? 'bg-green-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
+                                                                onClick={() => handleCopySingle(image.url, index)}
+                                                            >
+                                                                {copiedImageIndex === index ? <Check size={14} /> : <ClipboardCopy size={14} />}
+                                                                <span>{copiedImageIndex === index ? 'Copied!' : 'Copy'}</span>
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             ))}
@@ -370,10 +407,10 @@ export default function Page(): ReactNode {
                     
                     <div className="bg-[#1e5034]/50 backdrop-blur-sm rounded-xl p-6 border border-[#a4d7ba]/30">
                         <div className="bg-[#a4d7ba]/20 p-3 rounded-lg w-12 h-12 flex items-center justify-center mb-4">
-                            <Upload className="text-[#a4d7ba]" size={24} />
+                            <ClipboardCopy className="text-[#a4d7ba]" size={24} />
                         </div>
-                        <h3 className="font-semibold mb-2">Easy to Use</h3>
-                        <p className="text-[#a4d7ba] text-sm">Simple interface designed for batch image processing</p>
+                        <h3 className="font-semibold mb-2">Clipboard Support</h3>
+                        <p className="text-[#a4d7ba] text-sm">Easily paste images to upload and copy results back.</p>
                     </div>
                 </div>
             </div>
