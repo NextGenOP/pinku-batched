@@ -6,26 +6,18 @@ import {
     type ChangeEvent,
     type ReactNode
 } from "react";
-// --- NEW --- Added ZoomIn and X icons for the preview modal
-import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera, ClipboardCopy, Check, ZoomIn, X } from "lucide-react";
+// --- NEW --- Added ArrowRightLeft icon for the reverse color feature
+import { Upload, Wand2, RefreshCw, Download, CheckCircle, XCircle, Camera, ClipboardCopy, Check, ZoomIn, ArrowRightLeft } from "lucide-react";
 
-// --- Original Pink Filter Logic (Unchanged) ---
-const COLOR_A: number[] = [22, 80, 39];
-const COLOR_B: number[] = [249, 159, 210];
 
-const rLUT: Uint8ClampedArray = new Uint8ClampedArray(256);
-const gLUT: Uint8ClampedArray = new Uint8ClampedArray(256);
-const bLUT: Uint8ClampedArray = new Uint8ClampedArray(256);
-
-for (let i = 0; i < 256; i++) {
-    const luminance = i / 255.0;
-    const invLuminance = 1.0 - luminance;
-    rLUT[i] = (COLOR_A[0] * invLuminance) + (COLOR_B[0] * luminance);
-    gLUT[i] = (COLOR_A[1] * invLuminance) + (COLOR_B[1] * luminance);
-    bLUT[i] = (COLOR_A[2] * invLuminance) + (COLOR_B[2] * luminance);
-}
-
-function filtering(imageData: ImageData): ImageData {
+// --- MODIFIED --- Moved the filtering logic into its own function.
+// The LUT generation will now happen dynamically inside handleConvert.
+function filtering(
+    imageData: ImageData,
+    rLUT: Uint8ClampedArray,
+    gLUT: Uint8ClampedArray,
+    bLUT: Uint8ClampedArray
+): ImageData {
     const data = imageData.data;
     for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
@@ -39,6 +31,32 @@ function filtering(imageData: ImageData): ImageData {
     return imageData;
 }
 
+// Image Preview Modal Component (Unchanged)
+const ImagePreviewModal = ({ imageUrl, onClose }: { imageUrl: string | null; onClose: () => void; }) => {
+    if (!imageUrl) return null;
+
+    return (
+        <div
+            className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 animate-fade-in"
+            onClick={onClose}
+        >
+            <button
+                className="absolute top-4 right-4 text-white bg-black/50 rounded-full p-2 hover:bg-black/75 transition-colors z-10"
+                onClick={onClose}
+                aria-label="Close image preview"
+            >
+                <XCircle size={32} />
+            </button>
+            <img
+                src={imageUrl}
+                alt="Image Preview"
+                className="max-w-full max-h-full object-contain"
+                onClick={(e) => e.stopPropagation()}
+            />
+        </div>
+    );
+};
+
 
 export default function Page(): ReactNode {
     const [files, setFiles] = useState<File[]>([]);
@@ -46,8 +64,9 @@ export default function Page(): ReactNode {
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
     const [processingProgress, setProcessingProgress] = useState<number>(0);
     const [copiedImageIndex, setCopiedImageIndex] = useState<number | null>(null);
-    // --- NEW --- State to hold the URL of the image for the preview modal
-    const [previewImage, setPreviewImage] = useState<string | null>(null);
+    const [selectedImage, setSelectedImage] = useState<string | null>(null);
+    // --- NEW --- State to control color reversal
+    const [isReversed, setIsReversed] = useState<boolean>(false);
     const fileRef = useRef<HTMLInputElement>(null);
 
     const handlePaste = async (event: ClipboardEvent) => {
@@ -114,6 +133,25 @@ export default function Page(): ReactNode {
         setProcessedImages([]);
         let processedCount = 0;
 
+        // --- MODIFIED --- LUT generation is now inside handleConvert
+        const COLOR_A: number[] = [22, 80, 39];    // Green color for shadows
+        const COLOR_B: number[] = [249, 159, 210]; // Pink color for highlights
+
+        const shadowColor = isReversed ? COLOR_B : COLOR_A;
+        const highlightColor = isReversed ? COLOR_A : COLOR_B;
+
+        const rLUT = new Uint8ClampedArray(256);
+        const gLUT = new Uint8ClampedArray(256);
+        const bLUT = new Uint8ClampedArray(256);
+
+        for (let i = 0; i < 256; i++) {
+            const luminance = i / 255.0;
+            const invLuminance = 1.0 - luminance;
+            rLUT[i] = (shadowColor[0] * invLuminance) + (highlightColor[0] * luminance);
+            gLUT[i] = (shadowColor[1] * invLuminance) + (highlightColor[1] * luminance);
+            bLUT[i] = (shadowColor[2] * invLuminance) + (highlightColor[2] * luminance);
+        }
+
         const processingPromises = files.map(async (file) => {
             const image = document.createElement('img');
             const objectUrl = URL.createObjectURL(file);
@@ -130,7 +168,8 @@ export default function Page(): ReactNode {
                 if (ctx) {
                     ctx.drawImage(image, 0, 0);
                     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    const filterResult = filtering(imageData);
+                    // --- MODIFIED --- Pass dynamically generated LUTs to the filtering function
+                    const filterResult = filtering(imageData, rLUT, gLUT, bLUT);
                     ctx.putImageData(filterResult, 0, 0);
                     processedCount++;
                     setProcessingProgress(Math.round((processedCount / files.length) * 100));
@@ -199,26 +238,6 @@ export default function Page(): ReactNode {
     return (
         <div className="bg-[#010c05] min-h-screen px-4 py-8 flex justify-center text-[#ececec]">
             <div className="w-full max-w-6xl">
-
-                {/* --- NEW --- Image Preview Modal --- */}
-                {previewImage && (
-                    <div 
-                        className="fixed inset-0 bg-black/80 backdrop-blur-lg z-50 flex items-center justify-center p-4 animate-fade-in"
-                        onClick={() => setPreviewImage(null)} // Click outside to close
-                    >
-                        <div className="relative max-w-4xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
-                            <img src={previewImage} alt="Enlarged Preview" className="w-full h-full object-contain rounded-lg shadow-2xl" />
-                            <button
-                                onClick={() => setPreviewImage(null)}
-                                className="absolute -top-4 -right-4 bg-white/20 hover:bg-white/30 text-white rounded-full w-10 h-10 flex items-center justify-center transition-transform transform hover:scale-110"
-                                aria-label="Close preview"
-                            >
-                                <X size={24} />
-                            </button>
-                        </div>
-                    </div>
-                )}
-                
                 {/* Header */}
                 <div className="text-center mb-8">
                     <div className="flex items-center justify-center mb-4">
@@ -278,14 +297,13 @@ export default function Page(): ReactNode {
                                                     alt={file.name}
                                                     className="w-full h-full object-cover"
                                                 />
-                                                {/* --- NEW --- Added Preview button to the hover overlay */}
                                                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                                                     <button
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            setPreviewImage(file.url);
+                                                            setSelectedImage(file.url);
                                                         }}
-                                                        className="bg-blue-500/80 hover:bg-blue-500 text-white rounded-full w-8 h-8 flex items-center justify-center transition-transform transform hover:scale-110"
+                                                        className="bg-sky-500/80 hover:bg-sky-500 text-white rounded-full w-8 h-8 flex items-center justify-center transition-transform transform hover:scale-110"
                                                         aria-label={`Preview ${file.name}`}
                                                     >
                                                         <ZoomIn size={20} />
@@ -310,6 +328,22 @@ export default function Page(): ReactNode {
                                 </div>
                             )}
                         </div>
+
+                        {/* --- NEW --- Color Reverse Toggle */}
+                        <div className="flex items-center justify-center mb-6">
+                            <button
+                                onClick={() => setIsReversed(!isReversed)}
+                                className="flex items-center gap-3 text-[#a4d7ba] hover:text-white transition-colors px-4 py-2 rounded-lg bg-[#a4d7ba]/10 hover:bg-[#a4d7ba]/20"
+                                aria-pressed={isReversed}
+                                disabled={isProcessing}
+                            >
+                                <ArrowRightLeft size={16} />
+                                <span className="font-medium">
+                                    {isReversed ? 'Shadows: Pink / Highlights: Green' : 'Shadows: Green / Highlights: Pink'}
+                                </span>
+                            </button>
+                        </div>
+
 
                         {/* Action Buttons */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -346,17 +380,17 @@ export default function Page(): ReactNode {
                             <div className="border-2 border-[#a4d7ba]/40 rounded-xl p-6 bg-[#1e5034]/50">
                                 {isProcessing && !processedImages.length && (
                                         <div className="mb-4">
-                                         <div className="flex justify-between text-sm text-[#a4d7ba] mb-1">
-                                             <span>Processing Images</span>
-                                             <span>{processingProgress}%</span>
-                                         </div>
-                                         <div className="w-full bg-[#010c05]/50 rounded-full h-2.5">
-                                             <div
-                                                 className="bg-[#27e47a] h-2.5 rounded-full transition-all duration-300"
-                                                 style={{ width: `${processingProgress}%` }}
-                                             ></div>
-                                         </div>
-                                     </div>
+                                        <div className="flex justify-between text-sm text-[#a4d7ba] mb-1">
+                                            <span>Processing Images</span>
+                                            <span>{processingProgress}%</span>
+                                        </div>
+                                        <div className="w-full bg-[#010c05]/50 rounded-full h-2.5">
+                                            <div
+                                                className="bg-[#27e47a] h-2.5 rounded-full transition-all duration-300"
+                                                style={{ width: `${processingProgress}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
                                 )}
                                 {processedImages.length > 0 && (
                                     <div>
@@ -385,17 +419,18 @@ export default function Page(): ReactNode {
                                                             alt={`Processed ${image.originalName}`}
                                                         />
                                                     </div>
-                                                    {/* --- NEW --- Updated overlay with a Preview button --- */}
                                                     <div className="absolute inset-0 bg-black/80 p-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between">
-                                                        <p className="text-[#ececec] text-xs truncate">{image.originalName}</p>
-                                                        <div className="space-y-1.5">
+                                                        <div className="flex justify-between items-start">
+                                                            <p className="text-[#ececec] text-xs truncate w-full pr-2">{image.originalName}</p>
                                                             <button
-                                                                className="w-full flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
-                                                                onClick={() => setPreviewImage(image.url)}
+                                                                onClick={() => setSelectedImage(image.url)}
+                                                                className="flex-shrink-0 bg-white/10 hover:bg-white/20 text-white rounded-full w-6 h-6 flex items-center justify-center transition-colors"
+                                                                aria-label={`Preview ${image.originalName}`}
                                                             >
                                                                 <ZoomIn size={14} />
-                                                                <span>Preview</span>
                                                             </button>
+                                                        </div>
+                                                        <div className="space-y-1.5">
                                                             <button
                                                                 className="w-full flex items-center justify-center gap-1.5 bg-white/10 hover:bg-white/20 text-xs py-2 rounded-md transition-colors"
                                                                 onClick={() => handleDownloadSingle(image.url, image.name)}
@@ -403,7 +438,7 @@ export default function Page(): ReactNode {
                                                                 <Download size={14} />
                                                                 <span>Download</span>
                                                             </button>
-                                                            <button
+                                                              <button
                                                                 className={`w-full flex items-center justify-center gap-1.5 text-xs py-2 rounded-md transition-colors ${copiedImageIndex === index ? 'bg-green-500 text-white' : 'bg-white/10 hover:bg-white/20'}`}
                                                                 onClick={() => handleCopySingle(image.url, index)}
                                                             >
@@ -449,6 +484,9 @@ export default function Page(): ReactNode {
                     </div>
                 </div>
             </div>
+
+            {/* Render the preview modal component */}
+            <ImagePreviewModal imageUrl={selectedImage} onClose={() => setSelectedImage(null)} />
         </div>
     );
 }
