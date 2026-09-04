@@ -3,3 +3,8 @@ export interface ProcessedImage {
   name: string;
   originalName: string;
 }
+
+export interface FilePreview {
+  name: string;
+  url: string;
+}

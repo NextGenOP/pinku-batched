@@ -1,3 +1,4 @@
 bun.lock
 dist
+dist-octane
 node_modules
