@@ -13,7 +13,7 @@ export default defineConfig({
     outDir: "dist-octane",
     emptyOutDir: true,
     rollupOptions: {
-      input: "pinku-octane.html",
+      input: "index.html",
     },
   },
 });
